@@ -1,0 +1,408 @@
+// Load Wi-Fi library
+#include <WiFi.h>
+#include <Wire.h>
+#include <ESPmDNS.h>
+#include <ArduinoOTA.h>
+#include "time.h"
+#include "RTClib.h"
+
+//RTC_DS1307 rtc;
+RTC_DS3231 rtc;
+MDNSResponder mdns;
+DateTime now;
+
+char daysOfTheWeek[7][10] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+const char  monthsOfTheYear[12][10] = {"January", "Febuary", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"};
+
+// Replace with your network credentials
+//const char* ssid = "krowten99";
+//const char* password = "fah#>?AHY@NF43kg0po92";
+const char* ssid = "crapcast.com";
+const char* password = "199869f77e";
+
+// Set web server port number to 80
+WiFiServer server(80);
+
+// Variable to store the HTTP request
+String header;
+
+// Auxiliar variables to store the current output state
+String output26State = "CLOSE";
+String output27State = "CLOSE";
+
+// Assign output variables to GPIO pins
+// Motor A
+int motor1Pin1 = 27;
+int motor1Pin2 = 26;
+
+struct tm timeinfo;
+const char* ntpServer = "pool.ntp.org";
+const long  gmtOffset_sec = -25200;     // MST = -7 * 60 * 60
+const int   daylightOffset_sec = 3600;  // set to 0 when DST is not active
+
+// Current time
+//currentTime = rtc.now();
+// Previous time
+unsigned long previousMillis = 0;
+// Define timeout time in milliseconds (example: 2000ms = 2s)
+const int timeoutTime = 2000;
+// timeout after a day 24 * 60 * 60 * 1000 in milliseconds
+const unsigned long timeoutNTP = 86400000;
+
+
+
+void printLocalTime(WiFiClient netClient)
+{
+  //DateTime now = rtc.now();
+  now = rtc.now();
+  netClient.print("<p>");
+  netClient.print(daysOfTheWeek[now.dayOfTheWeek()]);
+  netClient.print(", ");
+  netClient.print(monthsOfTheYear[now.month()-1]);
+  netClient.print(" ");
+  netClient.print(now.day());
+  netClient.print(" ");
+  netClient.print(now.year());
+  netClient.print(" ");
+  netClient.print(now.hour());
+  netClient.print(":");
+  if(now.minute() < 10) {
+    netClient.print("0");
+  }
+  netClient.print(now.minute());
+  netClient.print(":");
+  if(now.second() < 10) {
+    netClient.print("0");
+  }
+  netClient.print(now.second());
+  netClient.print("</p>");
+}
+
+void setup() {
+  Serial.begin(115200);
+  Serial.println("Booting");
+  Serial.println("Free Heap: " + String(ESP.getFreeHeap()));
+
+  // sets the pins as outputs:
+  pinMode(motor1Pin1, OUTPUT);
+  pinMode(motor1Pin2, OUTPUT);
+  // pinMode(enable1Pin, OUTPUT);
+
+  // configure LED PWM functionalitites
+  // ledcSetup(pwmChannel, freq, resolution);
+
+  // attach the channel to the GPIO to be controlled
+  // ledcAttachPin(enable1Pin, pwmChannel);
+
+  //delay(3000); // wait for console opening
+
+  // Connect to Wi-Fi network with SSID and password
+  Serial.print("Connecting to ");
+  Serial.println(ssid);
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  // Print local IP address and start web server
+  Serial.println("");
+  Serial.println("WiFi connected.");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+
+
+  Serial.println("Configuring OTA");
+  ArduinoOTA.setHostname("chamberdoor");
+  ArduinoOTA.onStart([]() {
+    String type;
+    if (ArduinoOTA.getCommand() == U_FLASH)
+      type = "sketch";
+    else // U_SPIFFS
+      type = "filesystem";
+
+    // NOTE: if updating SPIFFS this would be the place to unmount SPIFFS using SPIFFS.end()
+    Serial.println("Start updating " + type);
+  });
+  ArduinoOTA.onEnd([]() {
+    Serial.println("\nEnd");
+  });
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+  });
+  ArduinoOTA.onError([](ota_error_t error) {
+    Serial.printf("Error[%u]: ", error);
+    if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+    else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+    else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+    else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+    else if (error == OTA_END_ERROR) Serial.println("End Failed");
+  });
+  ArduinoOTA.begin();
+  Serial.println("Setup of OTA complete");
+
+  if ( MDNS.begin ( "chamberdoor" ) ) {
+    Serial.println("mDNS responder started");
+  } else {
+    Serial.println("Failed setting up mDNS responder!");
+  }
+  MDNS.addService("http", "tcp", 80);
+
+  // init and get time
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+
+
+  if(!getLocalTime(&timeinfo)) {
+    Serial.println("Failed to obtain time from NTP server");
+  } else {
+    Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
+  }
+
+  if (! rtc.begin()) {
+    Serial.println("Couldn't find RTC");
+    while (1);
+  }
+
+  /*
+  if (rtc.lostPower()) {
+    Serial.println("RTC lost power, lets set the time!");
+
+  // Comment out below lines once you set the date & time.
+    // Following line sets the RTC to the date & time this sketch was compiled
+    //rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+
+    // Following line sets the RTC with an explicit date & time
+    // for example to set January 27 2017 at 12:56 you would call:
+    // rtc.adjust(DateTime(2017, 1, 27, 12, 56, 0));
+
+    //get time from NTP server, and set RTC
+    //struct tm timeinfo;
+    if(!getLocalTime(&timeinfo)) {
+      Serial.println("Failed to obtain time from NTP server");
+    } else {
+      rtc.adjust(DateTime(timeinfo.tm_year+1900,
+        timeinfo.tm_mon,
+        timeinfo.tm_mday,
+        timeinfo.tm_hour,
+        timeinfo.tm_min,
+        timeinfo.tm_sec
+      ));
+    }
+  }
+  */
+
+  if(!getLocalTime(&timeinfo)) {
+    Serial.println("Failed to obtain time from NTP server");
+  } else {
+    rtc.adjust(DateTime(timeinfo.tm_year+1900,  // returns date from 1900
+      timeinfo.tm_mon+1,                        // month starts at 0
+      timeinfo.tm_mday,
+      timeinfo.tm_hour,
+      timeinfo.tm_min,
+      timeinfo.tm_sec
+    ));
+  }
+
+  server.begin();
+}
+
+void loop() {
+  unsigned long currentMillis = millis();
+  if((unsigned long)(currentMillis - previousMillis) >= timeoutNTP) {
+    if(!getLocalTime(&timeinfo)) {
+      Serial.println("Failed to obtain time from NTP server");
+    }
+  }
+  ArduinoOTA.handle();                      // Listen for OTA requests
+  WiFiClient client = server.available();   // Listen for incoming clients
+
+  // poor mans daily timer.  Check to see if it's 5:30AM, and open the
+  // doors.  Close the doors in the evening at 9PM
+  // adding this outside of the if client code, that way it won't require
+  // someone to be connected to toggle the doors
+  now = rtc.now();
+  if(now.hour() == 5 && now.minute() == 30 && now.second() == 0) {
+    if(output26State == "CLOSE") {
+      // door is closed, let's open it.
+      Serial.println("5:30AM, Open the pod bay door, HAL. DOOR IS OPEN");
+      output26State = "OPEN";
+      // Move the DC motor forward at maximum speed
+      Serial.println("Moving Forward");
+      digitalWrite(motor1Pin1, HIGH);
+      digitalWrite(motor1Pin2, LOW);
+      delay(2000);
+
+      // Stop the DC motor
+      Serial.println("Motor stopped");
+      digitalWrite(motor1Pin1, LOW);
+      digitalWrite(motor1Pin2, LOW);
+      delay(1000);
+    }
+  } else if(now.hour() == 21 && now.minute() == 0 && now.second() == 0) {
+    if(output26State == "OPEN") {
+      //door is open, it's late, close the door
+      Serial.println("9:00 PM Close the door: DOOR IS CLOSED");
+      output26State = "CLOSE";
+      // Move DC motor backwards at maximum speed
+      Serial.println("Moving Backwards");
+      digitalWrite(motor1Pin1, LOW);
+      digitalWrite(motor1Pin2, HIGH);
+      delay(2000);
+
+      // Stop the DC motor
+      Serial.println("Motor stopped");
+      digitalWrite(motor1Pin1, LOW);
+      digitalWrite(motor1Pin2, LOW);
+      delay(1000);
+    }
+  }
+
+  if (client) {                             // If a new client connects,
+    now = rtc.now();
+    //previousTime = DateTime now;
+    previousMillis = now.unixtime();
+    Serial.println("New Client.");          // print a message out in the serial port
+    String currentLine = "";                // make a String to hold incoming data from the client
+    while (client.connected() && now.unixtime() - previousTime <= timeoutTime) {  // loop while the client's connected
+      //now = rtc.now();
+      if (client.available()) {             // if there's bytes to read from the client,
+        char c = client.read();             // read a byte, then
+        Serial.write(c);                    // print it out the serial monitor
+        header += c;
+        if (c == '\n') {                    // if the byte is a newline character
+          // if the current line is blank, you got two newline characters in a row.
+          // that's the end of the client HTTP request, so send a response:
+          if (currentLine.length() == 0) {
+            // HTTP headers always start with a response code (e.g. HTTP/1.1 200 OK)
+            // and a content-type so the client knows what's coming, then a blank line:
+            client.println("HTTP/1.1 200 OK");
+            client.println("Content-type:text/html");
+            client.println("Connection: close");
+            client.println();
+
+            // turns the GPIOs on and off
+            if (header.indexOf("GET /26/OPEN") >= 0) {
+              Serial.println("DOOR IS OPEN");
+              output26State = "OPEN";
+              // Move the DC motor forward at maximum speed
+              Serial.println("Moving Forward");
+              digitalWrite(motor1Pin1, HIGH);
+              digitalWrite(motor1Pin2, LOW);
+              delay(2000);
+
+              // Stop the DC motor
+              Serial.println("Motor stopped");
+              digitalWrite(motor1Pin1, LOW);
+              digitalWrite(motor1Pin2, LOW);
+              delay(1000);
+            } else if (header.indexOf("GET /26/CLOSE") >= 0) {
+              Serial.println("DOOR IS CLOSED");
+              output26State = "CLOSE";
+              // Move DC motor backwards at maximum speed
+              Serial.println("Moving Backwards");
+              digitalWrite(motor1Pin1, LOW);
+              digitalWrite(motor1Pin2, HIGH);
+              delay(2000);
+
+              // Stop the DC motor
+              Serial.println("Motor stopped");
+              digitalWrite(motor1Pin1, LOW);
+              digitalWrite(motor1Pin2, LOW);
+              delay(1000);
+
+            } else if (header.indexOf("GET /27/OPEN") >= 0) {
+              Serial.println("DOOR IS OPEN");
+              output27State = "OPEN";
+
+            } else if (header.indexOf("GET /27/CLOSE") >= 0) {
+              Serial.println("DOOR IS CLOSED");
+              output27State = "CLOSE";
+            }
+
+
+            // Display the HTML web page
+            client.println("<!DOCTYPE html><html>");
+            client.println("<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
+            client.println("<link rel=\"icon\" href=\"data:,\">");
+            // CSS to style the on/off buttons
+            // Feel free to change the background-color and font-size attributes to fit your preferences
+            client.println("<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center;}");
+            client.println(".button { background-color: #4CAF50; border: none; color: white; padding: 16px 40px;");
+            client.println("text-decoration: none; font-size: 30px; margin: 2px; cursor: pointer;}");
+            client.println(".button2 {background-color: #555555;}</style></head>");
+
+            // Web Page Heading
+            client.println("<body><h1>CHAMBER DOOR</h1>");
+            //printLocalTime(client);
+
+            // Display current state, and ON/OFF buttons for GPIO 26
+            client.println("<p>DOOR IS(CURRENT STATUS) " + output26State + "</p>");
+            // If the output26State is off, it displays the ON button
+            if (output26State == "CLOSE") {
+              client.println("<p><a href=\"/26/OPEN\"><button class=\"button\">OPEN</button></a></p>");
+            } else {
+              client.println("<p><a href=\"/26/CLOSE\"><button class=\"button button2\">CLOSE</button></a></p>");
+            }
+
+            // Display current state, and ON/OFF buttons for GPIO 27
+            client.println("<p>DOOR IS(CURRENT STATUS)" + output27State + "</p>");
+            // If the output27State is off, it displays the ON button
+            if (output27State == "CLOSE") {
+              client.println("<p><a href=\"/27/OPEN\"><button class=\"button\">OPEN</button></a></p>");
+            } else {
+              client.println("<p><a href=\"/27/CLOSE\"><button class=\"button button2\">CLOSE</button></a></p>");
+            }
+            printLocalTime(client);
+            /*
+            if(!getLocalTime(&timeinfo)) {
+              client.println("Failed to obtain time from NTP server");
+            } else {
+              client.println(&timeinfo, "<p>%A, %B %d %Y %H:%M:%S</p>");
+            }
+  now = rtc.now();
+  client.print("<p>");
+  client.print(now.dayOfTheWeek());
+  client.print("</p>");
+
+  client.print("<p>");
+  client.print(timeinfo.tm_year+1900);
+  client.print(" ");
+  client.print(timeinfo.tm_mon);
+  client.print(" ");
+  client.print(timeinfo.tm_mday);
+  client.print(" ");
+  client.print(timeinfo.tm_hour);
+  client.print(" ");
+  client.print(timeinfo.tm_min);
+  client.print(" ");
+  client.print(timeinfo.tm_sec);
+  client.print(" ");
+  client.print("</p>");
+
+  client.print("<p>");
+  client.print(F(__DATE__));
+  client.print(" ");
+  client.print(F(__TIME__));
+  client.print("</p>");
+  */
+            client.println("</body></html>");
+
+            // The HTTP response ends with another blank line
+            client.println();
+            // Break out of the while loop
+            break;
+          } else { // if you got a newline, then clear currentLine
+            currentLine = "";
+          }
+        } else if (c != '\r') {  // if you got anything else but a carriage return character,
+          currentLine += c;      // add it to the end of the currentLine
+        }
+      }
+    }
+    // Clear the header variable
+    header = "";
+    // Close the connection
+    client.stop();
+    Serial.println("Client disconnected.");
+    Serial.println("");
+  }
+}
