@@ -172,6 +172,39 @@ void setup() {
       var2 = request->getParam("state")->value();
       // PROCESS REST API - get button clicks from vals and move the motors
       digitalWrite(2, var2.toInt());
+      if(var1.toInt() == 26 && var2.toInt() == 1) {
+        // open the door
+        Serial.println("button clicked, Open the pod bay door, HAL. DOOR IS OPEN");
+        output26State = true;
+        // Move the DC motor forward at maximum speed
+        Serial.println("Moving Forward");
+        digitalWrite(motor1Pin1, HIGH);
+        digitalWrite(motor1Pin2, LOW);
+        delay(2000);
+
+        // Stop the DC motor
+        Serial.println("Motor stopped");
+        digitalWrite(motor1Pin1, LOW);
+        digitalWrite(motor1Pin2, LOW);
+        delay(1000);
+        digitalWrite(2, HIGH);
+      } else if(var1.toInt() == 26 && var2.toInt() == 0) {
+        //close the door
+        Serial.println("button un-clicked Close the door: DOOR IS CLOSED");
+        output26State = false;
+        // Move DC motor backwards at maximum speed
+        Serial.println("Moving Backwards");
+        digitalWrite(motor1Pin1, LOW);
+        digitalWrite(motor1Pin2, HIGH);
+        delay(2000);
+
+        // Stop the DC motor
+        Serial.println("Motor stopped");
+        digitalWrite(motor1Pin1, LOW);
+        digitalWrite(motor1Pin2, LOW);
+        delay(1000);
+        digitalWrite(2, LOW);
+      }
     } else {
       var1 = "Either nothing sent or invalid input";
       var2 = "Either nothing sent or invalid input";
