@@ -6,6 +6,8 @@
 #include <ArduinoOTA.h>
 #include "time.h"
 
+#define LEDPIN 2
+
 MDNSResponder mdns;
 DNSServer dnsServer;
 AsyncWebServer webServer(80);
@@ -135,6 +137,10 @@ String buttonProcessor(const String& var) {
       }
       buttons += String(timeinfo.tm_sec);
       buttons += "</p>";
+
+      buttons += "<br><br>";
+      buttons += "<p>Timer set to OPEN the door at 5:30 AM</p>";
+      buttons += "<p>Timer set to CLOSE the door at 9:00 PM</p>";
       return buttons;
     }
     return String();
@@ -149,7 +155,7 @@ void setup() {
   pinMode(motor1Pin1, OUTPUT);
   pinMode(motor1Pin2, OUTPUT);
   // pinMode(enable1Pin, OUTPUT);
-  pinMode(2, OUTPUT);
+  pinMode(LEDPIN, OUTPUT);
 
   Serial.println("Connecting to WiFi.");
   wifiManager.autoConnect();
@@ -171,11 +177,11 @@ void setup() {
       var1 = request->getParam("output")->value();
       var2 = request->getParam("state")->value();
       // PROCESS REST API - get button clicks from vals and move the motors
-      digitalWrite(2, var2.toInt());
       if(var1.toInt() == 26 && var2.toInt() == 1) {
         // open the door
         Serial.println("button clicked, Open the pod bay door, HAL. DOOR IS OPEN");
         output26State = true;
+        digitalWrite(LEDPIN, HIGH);
         // Move the DC motor forward at maximum speed
         Serial.println("Moving Forward");
         digitalWrite(motor1Pin1, HIGH);
@@ -187,11 +193,11 @@ void setup() {
         digitalWrite(motor1Pin1, LOW);
         digitalWrite(motor1Pin2, LOW);
         delay(1000);
-        digitalWrite(2, HIGH);
       } else if(var1.toInt() == 26 && var2.toInt() == 0) {
         //close the door
         Serial.println("button un-clicked Close the door: DOOR IS CLOSED");
         output26State = false;
+        digitalWrite(LEDPIN, LOW);
         // Move DC motor backwards at maximum speed
         Serial.println("Moving Backwards");
         digitalWrite(motor1Pin1, LOW);
@@ -203,7 +209,6 @@ void setup() {
         digitalWrite(motor1Pin1, LOW);
         digitalWrite(motor1Pin2, LOW);
         delay(1000);
-        digitalWrite(2, LOW);
       }
     } else {
       var1 = "Either nothing sent or invalid input";
@@ -289,6 +294,7 @@ void loop() {
       // door is closed, let's open it.
       Serial.println("5:30AM, Open the pod bay door, HAL. DOOR IS OPEN");
       output26State = true;
+      digitalWrite(LEDPIN, HIGH);
       // Move the DC motor forward at maximum speed
       Serial.println("Moving Forward");
       digitalWrite(motor1Pin1, HIGH);
@@ -300,13 +306,13 @@ void loop() {
       digitalWrite(motor1Pin1, LOW);
       digitalWrite(motor1Pin2, LOW);
       delay(1000);
-      digitalWrite(2, HIGH);
     }
   } else if(timeinfo.tm_hour == 21 && timeinfo.tm_min == 0 && timeinfo.tm_sec == 0) {
     if(output26State) { // output26state is true.  true = open, false = closed
       //door is open, it's late, close the door
       Serial.println("9:00 PM Close the door: DOOR IS CLOSED");
       output26State = false;
+      digitalWrite(LEDPIN, LOW);
       // Move DC motor backwards at maximum speed
       Serial.println("Moving Backwards");
       digitalWrite(motor1Pin1, LOW);
@@ -318,7 +324,6 @@ void loop() {
       digitalWrite(motor1Pin1, LOW);
       digitalWrite(motor1Pin2, LOW);
       delay(1000);
-      digitalWrite(2, LOW);
     }
   }
 }
