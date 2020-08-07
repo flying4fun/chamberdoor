@@ -4,14 +4,19 @@
 #include <ESPmDNS.h>
 #include <ESPAsyncWiFiManager.h>
 #include <ArduinoOTA.h>
+#include <BME280I2C.h>
 #include "time.h"
 
 #define LEDPIN 2
+//#define NAN 1e+30
+#define isnan(n) n == float(NAN)
 
 MDNSResponder mdns;
 DNSServer dnsServer;
 AsyncWebServer webServer(80);
 AsyncWiFiManager wifiManager(&webServer, &dnsServer);
+BME280I2C bme;    // Default : forced mode, standby time = 1000 ms
+                  // Oversampling = pressure ×1, temperature ×1, humidity ×1, filter off
 
 char daysOfTheWeek[7][10] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
 const char  monthsOfTheYear[12][10] = {"January", "Febuary", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"};
@@ -30,6 +35,10 @@ const char* ntpServer = "pool.ntp.org";
 const long  gmtOffset_sec = -25200;     // MST = -7 * 60 * 60
 const int   daylightOffset_sec = 3600;  // set to 0 when DST is not active
 
+float lastTemp = 0.0;
+float lastHum = 0.0;
+float lastPres = 0.0;
+
 // Current time
 //currentTime = rtc.now();
 time_t epochTime = 0;
@@ -37,6 +46,7 @@ unsigned int epochTimeOffset = 0;
 time_t espTime = 0;
 // Previous time
 unsigned long previousTime = 0;
+unsigned long previousTime2 = 0;
 // Define timeout time in milliseconds (example: 2000ms = 2s)
 // timeout once a day.  24 hours * 60 minutes * 60 seconds * 1000 milliseconds
 const unsigned long timeoutTime = 86400000;
@@ -94,6 +104,19 @@ String buttonProcessor(const String& var) {
     Serial.println(var);
     if(var == "BUTTONPLACEHOLDER") {
       String buttons = "";
+
+      if(lastPres > 0.0) {
+        buttons += "<p>Temperature: ";
+        buttons += String(lastTemp);
+        buttons += " F<br>";
+        buttons += "Humidity: ";
+        buttons += String(lastHum);
+        buttons += " %<br>";
+        buttons += "Pressure: ";
+        buttons += String(lastPres);
+        buttons += " in/hg</p>";
+      }
+
       buttons += "<p id=\"doorstatus26\">(GPIO 26) Door is currently ";
       if(output26State) {
         buttons += "OPEN</p>";
@@ -136,9 +159,15 @@ String buttonProcessor(const String& var) {
         buttons += String("0");
       }
       buttons += String(timeinfo.tm_sec);
+
+      if(timeinfo.tm_hour > 12) {
+        buttons += " PM";
+      } else {
+        buttons += " AM";
+      }
       buttons += "</p>";
 
-      buttons += "<br><br>";
+      buttons += "<br>";
       buttons += "<p>Timer set to OPEN the door at 5:30 AM</p>";
       buttons += "<p>Timer set to CLOSE the door at 9:00 PM</p>";
       return buttons;
@@ -156,6 +185,9 @@ void setup() {
   pinMode(motor1Pin2, OUTPUT);
   // pinMode(enable1Pin, OUTPUT);
   pinMode(LEDPIN, OUTPUT);
+
+  Wire.begin();
+  bme.begin();
 
   Serial.println("Connecting to WiFi.");
   wifiManager.autoConnect();
@@ -287,6 +319,20 @@ void loop() {
     epochTime = getLocalTime(&timeinfo);
     epochTimeOffset = (millis()/1000);
     espTime = epochTime;
+    previousTime = currentMillis;
+  }
+  if((unsigned long)(currentMillis - previousTime2) >= 15000 ) {
+    float temp(NAN);
+    float hum(NAN);
+    float pres(NAN);
+    BME280::TempUnit tempUnit(BME280::TempUnit_Fahrenheit);
+    BME280::PresUnit presUnit(BME280::PresUnit_inHg);
+    bme.read(pres, temp, hum, tempUnit, presUnit);
+    bme.read(pres, temp, hum, tempUnit, presUnit);
+    lastTemp = temp;
+    lastHum = hum;
+    lastPres = pres;
+    previousTime2 = currentMillis;
   }
 
   if(timeinfo.tm_hour == 5 && timeinfo.tm_min == 30 && timeinfo.tm_sec == 0) {
