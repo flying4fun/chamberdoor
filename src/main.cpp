@@ -15,6 +15,7 @@
 MDNSResponder mdns;
 DNSServer dnsServer;
 AsyncWebServer webServer(80);
+AsyncWebServer apiServer(808);
 AsyncWiFiManager wifiManager(&webServer, &dnsServer);
 BME280I2C bme;    // Default : forced mode, standby time = 1000 ms
                   // Oversampling = pressure ×1, temperature ×1, humidity ×1, filter off
@@ -249,11 +250,11 @@ void setup() {
     }
     request->send(200, "text/plain", "OK");
   });
-  webServer.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
+  apiServer.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
     //build a JSON without using the JSON library
     // output26State, output27State, temp, humidity, Pressure
     // time?  free heap?
-    Serial.println("Free Heap: " + String(ESP.getFreeHeap()));
+    //Serial.println("Free Heap: " + String(ESP.getFreeHeap()));
     String jsonString = "";
 
     jsonString += "{ \"ChamberDoor\": {\r\n";
@@ -286,6 +287,7 @@ void setup() {
   //webServer.on( "/program", handleProgram);
   //webServer.onNotFound( handleNotFound );
   webServer.begin();
+  apiServer.begin();
 
   Serial.println("Configuring OTA");
   ArduinoOTA.setHostname("chamberdoor");
