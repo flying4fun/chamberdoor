@@ -1,5 +1,6 @@
-// Load Wi-Fi library
+
 #include <WiFi.h>
+#include <ESPmDNS.h>
 #include <Wire.h>
 #include <ESPmDNS.h>
 #include <ESPAsyncWiFiManager.h>
@@ -248,6 +249,38 @@ void setup() {
     }
     request->send(200, "text/plain", "OK");
   });
+  webServer.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
+    //build a JSON without using the JSON library
+    // output26State, output27State, temp, humidity, Pressure
+    // time?  free heap?
+    Serial.println("Free Heap: " + String(ESP.getFreeHeap()));
+    String jsonString = "";
+
+    jsonString += "{ \"ChamberDoor\": {\r\n";
+    jsonString += "   \"id\": ";
+    jsonString += (uint16_t)ESP.getEfuseMac();
+    jsonString += ",\r\n";
+    jsonString += "   \"doorstatus\": ";
+    if(output26State) {
+      jsonString += "1";
+    } else {
+      jsonString += "0";
+    }
+    jsonString += ",\r\n";
+    jsonString += "   \"temperature\": ";
+    jsonString += lastTemp;
+    jsonString += ",\r\n";
+    jsonString += "   \"humidity\": ";
+    jsonString += lastHum;
+    jsonString += ",\r\n";
+    jsonString += "   \"pressure\": ";
+    jsonString += lastPres;
+    jsonString += ",\r\n";
+    jsonString += "   }\r\n";
+    jsonString += "}\r\n";
+
+    request->send(200, "application/json", jsonString);
+  });
   //webServer.on( "/favicon.ico", handleFavicon );
   //webServer.on( "/power", handlePower);
   //webServer.on( "/program", handleProgram);
@@ -316,9 +349,15 @@ void loop() {
   unsigned long currentMillis = millis();
   if((unsigned long)(currentMillis - previousTime) >= timeoutTime) {
     // lets update from NTP once a day.
-    epochTime = getLocalTime(&timeinfo);
-    epochTimeOffset = (millis()/1000);
-    espTime = epochTime;
+    if(!getLocalTime(&timeinfo)) {
+      Serial.println("Failed to obtain time from NTP server");
+    } else {
+      Serial.println(&timeinfo, "NTP Date/Time: %A, %B %d %Y %H:%M:%S");
+      epochTime = mktime(&timeinfo);
+      epochTimeOffset = (millis()/1000);
+      espTime = epochTime;
+      Serial.println("Updating clock/time from NTP");
+    }
     previousTime = currentMillis;
   }
   if((unsigned long)(currentMillis - previousTime2) >= 15000 ) {
@@ -333,6 +372,7 @@ void loop() {
     lastHum = hum;
     lastPres = pres;
     previousTime2 = currentMillis;
+    Serial.println("Updating temperature from BME280");
   }
 
   if(timeinfo.tm_hour == 5 && timeinfo.tm_min == 30 && timeinfo.tm_sec == 0) {
