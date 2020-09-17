@@ -1,8 +1,14 @@
-
+#include <Arduino.h>
+#ifdef ESP32
 #include <WiFi.h>
+#include <AsyncTCP.h>
 #include <ESPmDNS.h>
+#elif defined(ESP8266)
+#include <ESP8266WiFi.h>
+#include <ESPAsyncTCP.h>
+#include <ESP8266mDNS.h>
+#endif
 #include <Wire.h>
-#include <ESPmDNS.h>
 #include <ESPAsyncWiFiManager.h>
 #include <ArduinoOTA.h>
 #include <BME280I2C.h>
@@ -101,6 +107,25 @@ function toggleCheckbox(element) {
 </script>
 </body></html>
 )rawliteral";
+
+#ifdef ESP8266
+
+bool getLocalTime(struct tm * info)
+{
+    uint32_t start = millis();
+    time_t now;
+    while((millis()-start) <= 0) {
+        time(&now);
+        localtime_r(&now, info);
+        if(info->tm_year > (2016 - 1900)){
+            return true;
+        }
+        delay(10);
+    }
+    return false;
+}
+
+#endif
 
 String buttonProcessor(const String& var) {
     Serial.println(var);
@@ -276,7 +301,7 @@ void setup() {
     jsonString += ",\r\n";
     jsonString += "   \"pressure\": ";
     jsonString += lastPres;
-    jsonString += ",\r\n";
+    jsonString += "\r\n";
     jsonString += "   }\r\n";
     jsonString += "}\r\n";
 
@@ -328,9 +353,23 @@ void setup() {
   // init and get time
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
 
+  while( epochTime < 1577840400L) {           // NTP date > than 1 JAN 2020?
+    epochTime = time(nullptr);
+    delay(500);
+    Serial.print("*");
+    ArduinoOTA.handle();                      // Listen for OTA requests
+  }
+  Serial.println("");
 
   if(!getLocalTime(&timeinfo)) {
     Serial.println("Failed to obtain time from NTP server");
+    uint8_t syncTimes = 0;
+    while(!getLocalTime(&timeinfo, 0) && syncTimes < 3 ) {
+      delay(3000);
+      Serial.println("Failed to obtain time from NTP server");
+      syncTimes++;
+      ArduinoOTA.handle();                      // Listen for OTA requests
+    }
   } else {
     Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
     epochTime = mktime(&timeinfo);
@@ -351,6 +390,15 @@ void loop() {
   unsigned long currentMillis = millis();
   if((unsigned long)(currentMillis - previousTime) >= timeoutTime) {
     // lets update from NTP once a day.
+
+    while( epochTime < 1577840400L) {           // NTP date > than 1 JAN 2020?
+      epochTime = time(nullptr);
+      delay(500);
+      Serial.print("*");
+      ArduinoOTA.handle();                      // Listen for OTA requests
+    }
+    Serial.println("");
+
     if(!getLocalTime(&timeinfo)) {
       Serial.println("Failed to obtain time from NTP server");
     } else {
